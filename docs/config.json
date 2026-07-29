@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "https://j8df9j8tih.execute-api.us-east-1.amazonaws.com/prod",
+  "defaultBudgetLimitUsd": 200
+}

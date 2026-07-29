@@ -1,0 +1,408 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CloudCostCalculator - Cost Explorer snapshot API + CloudWatch cost metric + alarms + weekly report + S3 dashboard + editable mapping
+
+Parameters:
+  StageName:
+    Type: String
+    Default: prod
+
+  AlertEmail:
+    Type: String
+    Description: Email address to receive cost alerts and weekly reports (SNS confirmation will be sent)
+
+  MonthlyBudgetAmountUsd:
+    Type: Number
+    Default: 200
+    Description: Monthly budget threshold in USD (AWS Budgets notifications)
+
+  AdminToken:
+    Type: String
+    NoEcho: true
+    Description: Admin token used to protect PUT /mapping (store this somewhere safe)
+
+  AlarmPeriodSeconds:
+    Type: Number
+    Default: 86400
+    Description: Alarm evaluation period in seconds (86400 = daily). Use 300 for quick testing.
+
+Resources:
+  # -------------------------
+  # HTTP API (for dashboard)
+  # -------------------------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["GET", "PUT", "OPTIONS"]
+        AllowHeaders: ["*"]
+
+  # -------------------------
+  # S3 Dashboard Hosting
+  # -------------------------
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${DashboardBucket.Arn}/*"
+
+  # -------------------------
+  # Global CDN in front of the S3 static site — HTTPS + edge caching worldwide
+  # -------------------------
+  DashboardCDN:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "CloudCostCalculator dashboard CDN (${StageName})"
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_All
+        HttpVersion: http2
+        Origins:
+          - Id: S3WebsiteOrigin
+            DomainName: !Select [2, !Split ["/", !GetAtt DashboardBucket.WebsiteURL]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebsiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          # Short TTL so config.json / mapping edits show up quickly without a manual invalidation.
+          DefaultTTL: 60
+          MaxTTL: 300
+          MinTTL: 0
+
+  # -------------------------
+  # Alerts + Reports via SNS
+  # -------------------------
+  BudgetAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "CloudCostCalculator-${StageName}"
+
+  # IMPORTANT: Topic policy so CloudWatch Alarms + AWS Budgets can publish.
+  # Also includes owner full access so you don't lock yourself out.
+  BudgetAlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BudgetAlertsTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOwnerAll
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - "sns:GetTopicAttributes"
+              - "sns:SetTopicAttributes"
+              - "sns:AddPermission"
+              - "sns:RemovePermission"
+              - "sns:DeleteTopic"
+              - "sns:Subscribe"
+              - "sns:ListSubscriptionsByTopic"
+              - "sns:Publish"
+            Resource: !Ref BudgetAlertsTopic
+
+          - Sid: AllowCloudWatchAlarmsPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetAlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+          - Sid: AllowBudgetsPublish
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetAlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  BudgetAlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref BudgetAlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # -------------------------
+  # Main API Lambda
+  # - GET /health
+  # - GET /snapshot
+  # - GET /mapping
+  # - PUT /mapping  (requires x-admin-token)
+  # -------------------------
+  CostApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STAGE_NAME: !Ref StageName
+          DASHBOARD_BUCKET_NAME: !Ref DashboardBucket
+          ADMIN_TOKEN: !Ref AdminToken
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:ListBucket
+              Resource:
+                - !GetAtt DashboardBucket.Arn
+                - !Sub "${DashboardBucket.Arn}/*"
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+        Snapshot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /snapshot
+            Method: GET
+        MappingGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /mapping
+            Method: GET
+        MappingPut:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /mapping
+            Method: PUT
+
+  # -------------------------
+  # Upgrade A: Daily cost metric -> CloudWatch
+  # -------------------------
+  MetricsPublisherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: metrics_publisher.handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STAGE_NAME: !Ref StageName
+          DASHBOARD_BUCKET_NAME: !Ref DashboardBucket
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: "*"
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            # Daily at 00:15 UTC
+            Schedule: cron(15 0 * * ? *)
+
+  # CloudWatch alarms on the custom cost metric
+  Alarm50:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "ccc-mtdspend-${StageName}-ge-50"
+      Namespace: CloudCostCalculator
+      MetricName: MTDSpendUSD
+      Dimensions:
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 50
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BudgetAlertsTopic
+
+  Alarm100:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "ccc-mtdspend-${StageName}-ge-100"
+      Namespace: CloudCostCalculator
+      MetricName: MTDSpendUSD
+      Dimensions:
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 100
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BudgetAlertsTopic
+
+  Alarm200:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "ccc-mtdspend-${StageName}-ge-200"
+      Namespace: CloudCostCalculator
+      MetricName: MTDSpendUSD
+      Dimensions:
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 200
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BudgetAlertsTopic
+
+  # -------------------------
+  # Upgrade B: Weekly report via SNS
+  # -------------------------
+  WeeklyReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: weekly_report.handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          STAGE_NAME: !Ref StageName
+          DASHBOARD_BUCKET_NAME: !Ref DashboardBucket
+          ALERT_TOPIC_ARN: !Ref BudgetAlertsTopic
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref BudgetAlertsTopic
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !GetAtt DashboardBucket.Arn
+                - !Sub "${DashboardBucket.Arn}/*"
+      Events:
+        WeeklySchedule:
+          Type: Schedule
+          Properties:
+            # Mondays at 01:00 UTC
+            Schedule: cron(0 1 ? * MON *)
+
+  # -------------------------
+  # Optional extra: AWS Budgets -> SNS
+  # -------------------------
+  MonthlyCostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "cloud-cost-calculator-monthly-${StageName}"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetAmountUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertsTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertsTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertsTopic
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  DashboardBucketName:
+    Value: !Ref DashboardBucket
+  DashboardWebsiteUrl:
+    Value: !GetAtt DashboardBucket.WebsiteURL
+  CloudFrontUrl:
+    Description: "Public, global HTTPS URL — this is the one to share/use."
+    Value: !Sub "https://${DashboardCDN.DomainName}"
+  BudgetAlertsTopicArn:
+    Value: !Ref BudgetAlertsTopic

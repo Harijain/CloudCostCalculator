@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cloud Cost Calculator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="shell">
+    <div class="navScrim" id="nav-scrim"></div>
+
+    <!-- Sidebar: ledger spine -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sideTop">
+        <div class="logo">CCC</div>
+        <div class="sideTitle">
+          <div class="sideKicker">Cloud Cost</div>
+          <div class="sideName">Calculator</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="navItem active" data-view="dashboard">Dashboard</button>
+        <button class="navItem" data-view="services">Service details</button>
+        <button class="navItem" data-view="mapping">Mapping</button>
+        <button class="navItem" data-view="reports">Reports</button>
+      </nav>
+
+      <div class="sideBottom">
+        <div class="sideCard">
+          <div class="sideSmall">Mode</div>
+          <div id="mode-chip" class="chip live">LIVE</div>
+          <div class="sideSmall mutedText">Hosted on S3.</div>
+          <div class="sideSmall mutedText">Auto-connects via <code>/config.json</code>.</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="mobileBar">
+        <button class="navToggle" id="nav-toggle" aria-label="Open menu">☰</button>
+        <div class="logo">CCC</div>
+        <div class="sideName">Cloud Cost Calculator</div>
+      </div>
+
+      <header class="mainHeader">
+        <div class="heroText">
+          <div class="kicker">CLOUD COST CALCULATOR</div>
+          <h1>Make AWS bills readable.</h1>
+          <p class="sub">
+            A cost tracking and alert system that turns service-level billing into business-friendly insights.
+          </p>
+        </div>
+
+        <div class="topControls">
+          <div class="seg">
+            <button id="theme-system" class="pill">System</button>
+            <button id="theme-light" class="pill">Light</button>
+            <button id="theme-dark" class="pill">Dark</button>
+          </div>
+
+          <div class="seg">
+            <button id="btn-live" class="pill active">Live</button>
+            <button id="btn-sample" class="pill">Sample</button>
+            <button id="btn-refresh" class="pill primary">Refresh</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Views -->
+      <section id="view-dashboard" class="view active">
+        <!-- Hero row: MTD receipt stub + live connection ledger -->
+        <section class="heroGrid">
+          <section class="card mtdCard">
+            <div class="cardTitle">Month-to-date spend</div>
+            <div id="mtd-total" class="bigMoney">$0.00</div>
+            <div id="mtd-period" class="mutedText">Period: —</div>
+          </section>
+
+          <section class="card liveCard">
+            <div class="liveHeader">
+              <div>
+                <div class="cardTitle">Live data connection</div>
+                <div class="liveStatus">
+                  <span id="conn-dot" class="dot"></span>
+                  <span id="conn-status">Loading...</span>
+                </div>
+                <div class="mutedText small">Last updated: <span id="last-updated">—</span></div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="label">API base URL</div>
+            <div class="row">
+              <div id="api-base-display" class="apiPill">—</div>
+              <button id="api-copy" class="iconBtn" title="Copy API URL">⧉</button>
+            </div>
+            <div class="mutedText small tip">
+              Auto-configured from <code>/config.json</code>. Update that file if your API changes.
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="budgetRow">
+              <div>
+                <div class="label">Monthly budget (USD)</div>
+                <div class="mutedText small">Used for the Budget remaining gauge (UI only).</div>
+              </div>
+              <div class="row">
+                <input id="budget-limit" class="input smallInput" type="number" min="1" step="1" />
+                <button id="budget-save" class="btn">Save</button>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="mappingMini">
+              <div>
+                <div class="label">Category mapping</div>
+                <div class="mutedText small">Edit service → business labels in the Mapping tab.</div>
+              </div>
+              <button id="open-mapping" class="btn ghost">Open mapping</button>
+            </div>
+
+            <div id="live-msg" class="mutedText small"></div>
+          </section>
+        </section>
+
+        <!-- Row of 4 cards -->
+        <section class="quadGrid">
+          <section class="card span3">
+            <div class="cardTitle">Spend summary</div>
+            <p class="mutedText">Highlights unusual changes and threshold alerts.</p>
+
+            <div class="metric">
+              <div class="metricLabel">Forecasted month-end</div>
+              <div id="forecast-total" class="metricValue">$0.00</div>
+            </div>
+
+            <div class="metric">
+              <div class="metricLabel">Week-over-week change</div>
+              <div id="wow-change" class="metricValue">0.0%</div>
+            </div>
+
+            <ul id="alerts" class="alerts"></ul>
+          </section>
+
+          <section class="card span3">
+            <div class="cardTitle">Top cost categories</div>
+            <p class="mutedText">Mapped into terms owners understand.</p>
+            <div id="category-bars" class="bars"></div>
+          </section>
+
+          <section class="card span3">
+            <div class="cardTitle">Budget remaining</div>
+            <p class="mutedText">How much runway is left this month.</p>
+
+            <div class="gaugeWrap">
+              <svg id="budget-gauge" class="gauge" viewBox="0 0 200 118" aria-hidden="true">
+                <path class="gaugeArcBg" d="M 30 110 A 70 70 0 0 1 170 110" />
+                <path class="gaugeArcGreen" d="M 30 110 A 70 70 0 0 1 100 40" />
+                <path class="gaugeArcGold" d="M 100 40 A 70 70 0 0 1 148.5 60.5" />
+                <path class="gaugeArcRust" d="M 148.5 60.5 A 70 70 0 0 1 170 110" />
+                <line id="gauge-needle" class="gaugeNeedle" x1="100" y1="110" x2="30" y2="110" />
+                <circle class="gaugePivot" cx="100" cy="110" r="6" />
+              </svg>
+            </div>
+            <div class="gaugeReadout" id="gauge-readout">— % of budget used</div>
+
+            <div class="budgetStats">
+              <div>
+                <div class="metricLabel">Remaining</div>
+                <div id="budget-remaining" class="metricValue">$—</div>
+              </div>
+              <div>
+                <div class="metricLabel">Used</div>
+                <div id="budget-used" class="metricValue">$—</div>
+              </div>
+              <div>
+                <div class="metricLabel">%</div>
+                <div id="budget-used-pct" class="metricValue">—%</div>
+              </div>
+            </div>
+
+            <div class="progress">
+              <div id="budget-progress" class="progressBar"></div>
+            </div>
+
+            <div class="mutedText small">
+              Set your monthly budget in the Live card to enable this.
+            </div>
+          </section>
+
+          <section class="card span3">
+            <div class="cardTitle">Spend share</div>
+            <p class="mutedText">Where your monthly spend is concentrated.</p>
+
+            <div class="donutWrap">
+              <svg id="donut" viewBox="0 0 120 120" class="donut"></svg>
+              <div id="donut-legend" class="legend"></div>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section id="view-services" class="view">
+        <section class="card">
+          <div class="cardTitle">Service details</div>
+          <p class="mutedText">Raw AWS services with mapped business labels.</p>
+
+          <div class="tableWrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>AWS service</th>
+                  <th>Business label</th>
+                  <th>Usage</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
+              <tbody id="service-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-mapping" class="view">
+        <section class="card">
+          <div class="cardTitle">Category mapping (service → business label)</div>
+          <p class="mutedText small">
+            Loads from <code>/mapping</code>. Saving writes <code>mapping.json</code> to your S3 dashboard bucket.
+            Requires <strong>AdminToken</strong>.
+          </p>
+
+          <div class="row">
+            <input id="admin-token" class="input" type="password" placeholder="Admin token (x-admin-token)" />
+          </div>
+
+          <div class="mapWrap">
+            <table class="mapTable">
+              <thead>
+                <tr>
+                  <th>AWS service name</th>
+                  <th>Business label</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="map-body"></tbody>
+            </table>
+          </div>
+
+          <div class="btnRow">
+            <button id="map-add" class="btn ghost">Add row</button>
+            <button id="map-save" class="btn primary">Save mapping</button>
+          </div>
+
+          <div id="map-msg" class="mutedText small"></div>
+        </section>
+      </section>
+
+      <section id="view-reports" class="view">
+        <section class="card">
+          <div class="cardTitle">Weekly report workflow</div>
+          <p class="mutedText">
+            A scheduled Lambda compares this week's spend vs last week's and emails a digest via SNS.
+          </p>
+          <p class="mutedText small">
+            Runs automatically every Monday (UTC). Confirm your SNS subscription to receive emails.
+          </p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

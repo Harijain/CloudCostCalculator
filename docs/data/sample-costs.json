@@ -1,0 +1,52 @@
+{
+    "period": "2024-01",
+    "currency": "USD",
+    "services": [
+      {
+        "service": "S3 Standard",
+        "businessLabel": "File storage",
+        "cost": 5.67,
+        "unit": "GB-month",
+        "usage": 420
+      },
+      {
+        "service": "EC2",
+        "businessLabel": "Compute servers",
+        "cost": 124.32,
+        "unit": "hours",
+        "usage": 612
+      },
+      {
+        "service": "RDS",
+        "businessLabel": "Managed databases",
+        "cost": 89.12,
+        "unit": "hours",
+        "usage": 448
+      },
+      {
+        "service": "CloudWatch",
+        "businessLabel": "Monitoring",
+        "cost": 18.4,
+        "unit": "GB",
+        "usage": 92
+      },
+      {
+        "service": "Lambda",
+        "businessLabel": "Serverless compute",
+        "cost": 12.65,
+        "unit": "invocations",
+        "usage": 820000
+      },
+      {
+        "service": "SNS",
+        "businessLabel": "Alerts & messaging",
+        "cost": 3.11,
+        "unit": "messages",
+        "usage": 1200
+      }
+    ],
+    "weekOverWeek": {
+      "previousWeek": 52.4,
+      "currentWeek": 61.9
+    }
+  }

@@ -1,0 +1,69 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+coverage/
+htmlcov/
+
+# =========================
+# Secrets (NEVER COMMIT)
+# =========================
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.crt
+*.cer
+*.der
+*.pfx
+
+# AWS credentials/config (local)
+.aws/
+
+# =========================
+# AWS SAM / Serverless build artifacts
+# =========================
+.aws-sam/
+samconfig.toml
+
+# =========================
+# Outputs / local JSON dumps
+# =========================
+out
+out-*
+*.log
+
+# =========================
+# Spreadsheets / keys / exports
+# (your repo currently has an "accessK..." Excel file)
+# =========================
+*.xlsx
+*.xls
+*.csv
+
+# =========================
+# Node / Frontend (if any build artifacts ever appear)
+# =========================
+node_modules/
+dist/
+build/

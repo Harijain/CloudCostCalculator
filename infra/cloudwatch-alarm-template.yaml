@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cost alerting setup for Cloud Cost Calculator.
+
+Parameters:
+  MonthlyBudgetThreshold:
+    Type: Number
+    Default: 200
+    Description: Budget threshold in USD to trigger alerts.
+  AlertEmail:
+    Type: String
+    Description: Email address for SNS notifications.
+
+Resources:
+  CostAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cloud-cost-alerts
+
+  CostAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref CostAlertTopic
+
+  CostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: MonthlyCostAlarm
+      AlarmDescription: Triggers when estimated charges exceed threshold.
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Period: 21600
+      Statistic: Maximum
+      Threshold: !Ref MonthlyBudgetThreshold
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      AlarmActions:
+        - !Ref CostAlertTopic
+
+Outputs:
+  AlertTopicArn:
+    Description: SNS topic for billing alerts.
+    Value: !Ref CostAlertTopic
